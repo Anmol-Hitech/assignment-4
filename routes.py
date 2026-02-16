@@ -1,9 +1,9 @@
-from fastapi import FastAPI,Depends
+from fastapi import FastAPI,Depends,HTTPException
 from sqlalchemy.orm import Session
-from response_schemas import DepRes,TeacherRes,CourseRes,EnrollRes,StudentRes
+from response_schemas import DepRes,TeacherRes,CourseRes,EnrollRes,StudentRes,CustomStudentRes,CustomCourseres,Custometeacher,CustomLazyCourse,CustomLazyStudent,StudentInSemester,BonusDepartmentWithTeachers,BonusCustomTeacher
 from input_schemas import DepartmentCreate,TeacherCreate,StudentCreate,CourseCreate,EnrollmentCreate
 from models import get_db,Department,Teacher,Student,Course,Enrollment,TeacherProfile
-
+from typing import List
 app=FastAPI()
 
 @app.post("/departments/",response_model=DepRes)
@@ -56,3 +56,91 @@ def create_enrollment(enroll:EnrollmentCreate,db:Session=Depends(get_db)):
     db.commit()
     db.refresh(db_enroll)
     return db_enroll
+
+
+@app.get("/lazy/teachers/{id}", response_model=Custometeacher)
+def get_teacher(id: int, db: Session = Depends(get_db)):
+    teacher = db.query(Teacher).filter(Teacher.id == id).first()
+    if not teacher:
+        raise HTTPException(status_code=404, detail="Teacher not found")
+    
+    return {
+        "name": teacher.name,
+        "department_name": teacher.department.name if teacher.department else None,
+        "teacher_profile": {
+            "qualification": teacher.teacher_profile.qualification if teacher.teacher_profile else None,
+            "exp_years": teacher.teacher_profile.exp_years if teacher.teacher_profile else None
+        } if teacher.teacher_profile else None
+    }
+
+
+
+@app.get("/lazy/students/{id}", response_model=CustomStudentRes)
+def get_student(id: int, db: Session = Depends(get_db)):
+    student = db.query(Student).filter(Student.id == id).first()
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    courses = [
+        CustomCourseres(
+            title=enrollment.course.title,
+            semester=enrollment.sem
+        )
+        for enrollment in student.enrollments
+    ]
+
+    return {
+        "student": student.name,
+        "courses": courses
+    }
+@app.get("/lazy/courses/{id}", response_model=CustomLazyCourse)
+def get_course(id: int, db: Session = Depends(get_db)):
+    course = db.query(Course).filter(Course.id == id).first()
+    if not course:
+        raise HTTPException(status_code=404, detail={"message": "Course not found"})
+
+    students = [
+        CustomLazyStudent(name=enrollment.student.name)
+        for enrollment in course.enrollments
+    ]
+
+    return {
+        "course": course.title,
+        "students": students
+    }
+@app.get("/bonus/departments/{id}", response_model=BonusDepartmentWithTeachers)
+def get_department(id: int, db: Session = Depends(get_db)):
+    department = db.query(Department).filter(Department.id == id).first()
+    if not department:
+        raise HTTPException(status_code=404, detail={"message": "Department not found"})
+
+    teachers = [
+        BonusCustomTeacher(
+            id=teacher.id,
+            name=teacher.name,
+            email=teacher.email,
+            department_id=teacher.department_id
+        )
+        for teacher in department.teacher  
+    ]
+
+    return {
+        "id": department.id,
+        "name": department.name,
+        "teachers": teachers
+    }
+
+@app.get("/bonus/students", response_model=List[StudentInSemester])
+def get_students_by_semester(semester: int, db: Session = Depends(get_db)):
+    enrollments = db.query(Enrollment).filter(Enrollment.sem == semester).all()
+    students_set = {enrollment.student for enrollment in enrollments}
+
+    students = [
+        StudentInSemester(
+            id=student.id,
+            name=student.name,
+            email=student.email
+        ) for student in students_set
+    ]
+
+    return students
